@@ -24,7 +24,6 @@ use std::comm::*;
 
 static PORT:    int = 4414;
 static IPV4_LOOPBACK: &'static str = "127.0.0.1";
-static mut visitor_count: uint = 0;
 
 struct sched_msg {
     stream: Option<std::rt::io::net::tcp::TcpStream>,
@@ -34,6 +33,8 @@ struct sched_msg {
 fn main() {
     let req_vec: ~[sched_msg] = ~[];
     let shared_req_vec = arc::RWArc::new(req_vec);
+    let visitor_count: uint = 0;
+    let shared_vis_count = arc::RWArc::new(visitor_count);
     let add_vec = shared_req_vec.clone();
     let take_vec = shared_req_vec.clone();
     
@@ -78,12 +79,14 @@ fn main() {
     //for stream in acceptor.incoming().take(10 as uint) {
     for stream in acceptor.incoming() {
         let stream = Cell::new(stream);
-        
+        let local_vis_count = shared_vis_count.clone();
         // Start a new task to handle the connection
         let child_chan = chan.clone();
         do spawn {
-            unsafe {
-                visitor_count += 1;
+            let mut vis_count = 0;
+            do local_vis_count.write |count| {
+                (*count) = (*count)+1;
+                vis_count = (*count);
             }
             
             let mut stream = stream.take();
@@ -109,7 +112,7 @@ fn main() {
                          <body>
                          <h1>Greetings, Krusty!</h1>
                          <h2>Visitor count: %u</h2>
-                         </body></html>\r\n", unsafe{visitor_count});
+                         </body></html>\r\n", vis_count);
 
                     stream.write(response.as_bytes());
                 }
