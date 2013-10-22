@@ -50,16 +50,6 @@ fn main() {
     
     // add file requests into queue.
     do spawn {
-        while(true) {
-            do add_vec_char.write |vec| {
-                let tf:sched_msg = port_char.recv();
-                (*vec).push(tf);
-                println("add to wa-queue");
-            }
-        }
-    }
-
-    do spawn {
         loop {
             do add_vec.write |vec| {
                 // port.recv() will block the code and keep locking the RWArc, so we simply use peek() to check if there's message to recv.
@@ -70,25 +60,44 @@ fn main() {
                     println(fmt!("add to queue, size: %ud", (*vec).len()));
                 }
             }
+            do add_vec_char.write |vec| {
+                // port.recv() will block the code and keep locking the RWArc, so we simply use peek() to check if there's message to recv.
+                // But a asynchronous solution will be much better.
+                if (port_char.peek()) {
+                    let tf:sched_msg = port_char.recv();
+                    (*vec).push(tf);
+                    println(fmt!("add to wa-queue, size: %ud", (*vec).len()));
+                }
+            }
         }
     }
     
-// take file requests from queue, and send a response.
+    // take file requests from queue, and send a response.
     // FIFO
     do spawn {
         loop {
             do take_vec_char.write |vec| {
-                let mut tf = (*vec).pop();
-                
-                match io::read_whole_file(tf.filepath) {
-                    Ok(file_data) => {
-                        tf.stream.write(file_data);
-                    }
-                    Err(err) => {
-                        println(err);
-                    }
+                if ((*vec).len() > 0) {
+                    // FILO didn't make sense in service scheduling, so we modify it as FIFO by using shift_opt() rather than pop().
+                    let tf_opt: Option<sched_msg> = (*vec).shift_opt();
+                    let mut tf = tf_opt.unwrap();
+                    println(fmt!("shift from wa-queue, size: %ud", (*vec).len()));
+
+                    match io::read_whole_file(tf.filepath) { // killed if file size is larger than memory size.
+                        Ok(file_data) => {
+                            println(fmt!("begin serving file [%?]", tf.filepath));
+                            // A web server should always reply a HTTP header for any legal HTTP request.
+                            tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
+                            tf.stream.write(file_data);
+                            println(fmt!("finish file [%?]", tf.filepath));
+                        }
+                        Err(err) => {
+                            println(err);
+                        }
+                    } 
                 }
             }
+
             do take_vec.write |vec| {
                 if ((*vec).len() > 0) {
                     // FILO didn't make sense in service scheduling, so we modify it as FIFO by using shift_opt() rather than pop().
@@ -120,7 +129,6 @@ fn main() {
             return;
         },
     };
-    println(fmt!("ip address: %?", ip));
 
     let socket = net::tcp::TcpListener::bind(SocketAddr {ip: ip, port: PORT as u16});
 
