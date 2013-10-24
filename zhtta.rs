@@ -14,23 +14,45 @@
 
 extern mod extra;
 
-
 use std::rt::io::*;
 use std::rt::io::net::ip::SocketAddr;
 use std::io::println;
 use std::cell::Cell;
-use std::{os, str, io};
+use std::{os, str, io, run};
 use extra::arc;
 use std::comm::*;
+use gash::handle_cmdline;
 
+mod gash;
 
 static PORT:    int = 4414;
 static IP: &'static str = "127.0.0.1";
 
-
 struct sched_msg {
     stream: Option<std::rt::io::net::tcp::TcpStream>,
     filepath: ~std::path::PosixPath
+}
+
+//allows for server-side gashing replacement of '<--!#exec cmd="{gash-command}" -->'
+//admittedly lousy implementation, and only replaces the first instance of a command at the moment
+//but i've been working on it for hours, and it does something, and i'm happy
+fn exec_command(file_data: &str) -> ~str {
+    let mut build_result: ~[~str] = ~[~""];
+    // while (file_data.contains("<--!#exec cmd=")) { //hopefully i can get this working to replace every instance of a command
+        println("replacing SSI gashing!");
+        let index = file_data.find_str("<--!#exec cmd=").unwrap();
+        build_result.push(file_data.slice_to(index).to_owned());
+        let next_part = file_data.slice_from(index);
+        let command_stmt = next_part.slice_to(next_part.find_str("\" -->").unwrap()+5);
+        let mut cmd = command_stmt.replace("<--!#exec cmd=\"", "");
+        cmd = cmd.replace("\" -->", "");
+        // println(fmt!("command is %?", cmd)); //for testing
+        let x: Option<run::ProcessOutput> = handle_cmdline(cmd);
+        // println(fmt!("test %?", str::from_utf8(handle_cmdline("date").unwrap().output))); //for testing 
+        build_result.push(str::from_utf8(x.unwrap().output));
+        build_result.push(next_part.slice_from(next_part.find_str("-->").unwrap()+3).to_owned());
+    // }
+    return build_result.concat();
 }
 
 fn main() {
@@ -61,16 +83,24 @@ fn main() {
         do spawn {
             loop {
                 let mut tf: sched_msg = sm_port.recv(); // wait for the dequeued request to handle
-                match io::read_whole_file(tf.filepath) { // killed if file size is larger than memory size.
+                match io::read_whole_file_str(tf.filepath) { // killed if file size is larger than memory size.
                     Ok(file_data) => {
-                        println(fmt!("begin serving file [%?]", tf.filepath));
-                        if tf.filepath.to_str().ends_with(".shtml") {
-                            parse_gash(file_data);
-                        }
-                        // A web server should always reply a HTTP header for any legal HTTP request.
-                        tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
-                        tf.stream.write(file_data);
-                        println(fmt!("finish file [%?]", tf.filepath));
+                            println(fmt!("begin serving file from queue [%?]", tf.filepath));
+                            println(fmt!("file size is %?", tf.filepath.get_size().unwrap()));
+                            if (file_data.contains("<--!#exec cmd=")) {
+                                let file_data_str = exec_command(file_data);
+                                // A web server should always reply a HTTP header for any legal HTTP request.
+                                tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
+                                //println(fmt!("file contains: %?", file_data_str));
+                                tf.stream.write(file_data_str.as_bytes());
+                                println(fmt!("finish file [%?]", tf.filepath));
+                            } else {
+                                // A web server should always reply a HTTP header for any legal HTTP request.
+                                tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
+                                println(fmt!("file contains: %?", file_data));
+                                tf.stream.write(file_data.as_bytes());
+                                println(fmt!("finish file [%?]", tf.filepath));
+                            }
                     }
                     Err(err) => {
                         println(err);
@@ -209,7 +239,9 @@ fn main() {
                     let (sm_port, sm_chan) = std::comm::stream();
                     sm_chan.send(msg);
 
-                    incoming_ip = ~"128.143.";
+                    //Hardcoding for testing
+                    //incoming_ip = ~"128.143.";
+
                     let mut wahoo_index = 0;                    
                     if checkWahoo(incoming_ip)
                     {
@@ -251,12 +283,4 @@ fn checkWahoo(ip: ~str) -> bool {
         }
     }
     return false;
-}
-
-fn parse_gash(cmd: &[u8]) {
-    let mut cmd_str = str::from_utf8(cmd);
-    while cmd_str.contains("<!--#") {
-        //get substring that contains a command, and run it somehow
-        //replace substring with command result
-    }
 }
