@@ -80,14 +80,44 @@ fn main() {
             do take_vec.write |vec| {
                 if ((*vec).len() > 0) {
                     // LIFO didn't make sense in service scheduling, so we modify it as FIFO by using shift_opt() rather than pop().
+                    /*
                     let tf_opt: Option<sched_msg> = (*vec).shift_opt();
                     let tf = tf_opt.unwrap();
+                    println(fmt!("shift from queue, size: %ud", (*vec).len()));
+                    sm_chan.send(tf); // send the request to send-response-task to serve.
+                    */
+                    //Find shortest process
+                    let mut wahoo_index = 0;
+                    let mut min_index: uint = 0;      let mut min_size: int = 0;
+                    do local_wahoo_index.write |count| { wahoo_index = (*count) }
+                    
+                    //Find shortest Charlottesville request, else do other requests
+                    if wahoo_index > 0 {
+                        for i in range(0, wahoo_index) {
+                            let size =  (*vec)[i].filepath.get_size().unwrap_or_zero();
+                            if min_size <= 0 || min_size > size as int{
+                                min_size = size as int;
+                                min_index = i;
+                            }
+                        }
+                    }
+                    else {
+                        for i in range(0, (*vec).len()) {
+                            let size =  (*vec)[i].filepath.get_size().unwrap_or_zero();
+                            if min_size <= 0 || min_size > size as int {
+                                min_size = size as int;
+                                min_index = i;
+                            }
+                        }
+                    }
+
+                    let tf = (*vec).remove(min_index);
                     println(fmt!("shift from queue, size: %ud", (*vec).len()));
                     sm_chan.send(tf); // send the request to send-response-task to serve.
 
                     //Decrement wahoo index
                     do local_wahoo_index.write |count| {
-                        if ((*count) > 0 ) {
+                        if (wahoo_index > 0) {
                             (*count) -= 1;
                             println(fmt!("wahoo index decremented to %u", (*count)));
                         }
