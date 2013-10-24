@@ -256,6 +256,7 @@ fn checkWahoo(ip: ~str) -> bool {
 fn parse_gash(cmd: &[u8]) {
     let mut cmd_str = str::from_utf8(cmd);
     while cmd_str.contains("<!--#") {
-
+        //get substring that contains a command, and run it somehow
+        //replace substring with command result
     }
 }
