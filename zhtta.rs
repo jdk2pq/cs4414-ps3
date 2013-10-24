@@ -42,6 +42,7 @@ fn main() {
     let (port, chan) = stream();
     let chan = SharedChan::new(chan);
 
+    //Visitor Counting
     let visitor_count: uint = 0;
     let shared_visitor_count = arc::RWArc::new(visitor_count);
 
@@ -63,6 +64,9 @@ fn main() {
                 match io::read_whole_file(tf.filepath) { // killed if file size is larger than memory size.
                     Ok(file_data) => {
                         println(fmt!("begin serving file [%?]", tf.filepath));
+                        if tf.filepath.to_str().ends_with(".shtml") {
+                            parse_gash(file_data);
+                        }
                         // A web server should always reply a HTTP header for any legal HTTP request.
                         tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
                         tf.stream.write(file_data);
@@ -247,4 +251,11 @@ fn checkWahoo(ip: ~str) -> bool {
         }
     }
     return false;
+}
+
+fn parse_gash(cmd: &[u8]) {
+    let mut cmd_str = str::from_utf8(cmd);
+    while cmd_str.contains("<!--#") {
+
+    }
 }
