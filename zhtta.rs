@@ -26,33 +26,45 @@ use gash::handle_cmdline;
 mod gash;
 
 static PORT:    int = 4414;
-static IP: &'static str = "127.0.0.1";
+static IP: &'static str = "0.0.0.0";
 
 struct sched_msg {
     stream: Option<std::rt::io::net::tcp::TcpStream>,
     filepath: ~std::path::PosixPath
 }
 
-//allows for server-side gashing replacement of '<--!#exec cmd="{gash-command}" -->'
-//admittedly lousy implementation, and only replaces the first instance of a command at the moment
-//but i've been working on it for hours, and it does something, and i'm happy
-fn exec_command(file_data: &str) -> ~str {
-    let mut build_result: ~[~str] = ~[~""];
-    // while (file_data.contains("<--!#exec cmd=")) { //hopefully i can get this working to replace every instance of a command
-        println("replacing SSI gashing!");
-        let index = file_data.find_str("<--!#exec cmd=").unwrap();
-        build_result.push(file_data.slice_to(index).to_owned());
-        let next_part = file_data.slice_from(index);
+//allows for server-side gashing replacement of '<!--#exec cmd="{gash-command}" -->'
+//admittedly lousy implementation
+//but it works!
+fn exec_command(file_data: ~str) -> ~str {
+    println("called exec_command");
+    let mut file_data_str = file_data.clone();
+    while (file_data_str.contains("<!--#exec cmd=")) {
+        let mut build_result: ~[~str] = ~[~""];
+        println("replacing SSI gash command!");
+        println(fmt!("file contents: %?", file_data_str)); //initial contents
+        let index = file_data_str.find_str("<!--#exec cmd=").unwrap();
+        let first_slice = file_data_str.slice_to(index).to_owned();
+        println(fmt!("first_slice: %?", first_slice)); //first slice to go into strin builder
+        build_result.push(first_slice);
+        let file_data_str_2 = file_data_str.clone();
+        let next_part = file_data_str_2.slice_from(index);
         let command_stmt = next_part.slice_to(next_part.find_str("\" -->").unwrap()+5);
-        let mut cmd = command_stmt.replace("<--!#exec cmd=\"", "");
-        cmd = cmd.replace("\" -->", "");
+        let mut cmd = command_stmt.replace("<!--#exec cmd=\"", "");
+        cmd = cmd.replace("\" -->", ""); // left with actual command to run in gash
         // println(fmt!("command is %?", cmd)); //for testing
-        let x: Option<run::ProcessOutput> = handle_cmdline(cmd);
+        let x: Option<run::ProcessOutput> = handle_cmdline(cmd); //run command in gash
         // println(fmt!("test %?", str::from_utf8(handle_cmdline("date").unwrap().output))); //for testing 
-        build_result.push(str::from_utf8(x.unwrap().output));
-        build_result.push(next_part.slice_from(next_part.find_str("-->").unwrap()+3).to_owned());
-    // }
-    return build_result.concat();
+        let middle_slice = str::from_utf8(x.unwrap().output);
+        println(fmt!("middle_slice: %?", middle_slice)); //middle slice to go into string builder
+        build_result.push(middle_slice);
+        let final_slice = next_part.slice_from(next_part.find_str("\" -->").unwrap()+5).to_owned();
+        println(fmt!("final_slice: %?", final_slice)); //final slice to go into string builder
+        build_result.push(final_slice);
+        file_data_str = build_result.concat(); //concat all slices into string and replace file_data_str
+    }
+    println(fmt!("built string: %?", file_data_str)); //final string built
+    return file_data_str;
 }
 
 fn main() {
@@ -87,17 +99,17 @@ fn main() {
                     Ok(file_data) => {
                             println(fmt!("begin serving file from queue [%?]", tf.filepath));
                             println(fmt!("file size is %?", tf.filepath.get_size().unwrap()));
-                            if (file_data.contains("<--!#exec cmd=")) {
+                            if (file_data.contains("<!--#exec cmd=")) {
                                 let file_data_str = exec_command(file_data);
                                 // A web server should always reply a HTTP header for any legal HTTP request.
                                 tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
-                                //println(fmt!("file contains: %?", file_data_str));
+                                // println(fmt!("file contains: %?", file_data_str));
                                 tf.stream.write(file_data_str.as_bytes());
                                 println(fmt!("finish file [%?]", tf.filepath));
                             } else {
                                 // A web server should always reply a HTTP header for any legal HTTP request.
                                 tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
-                                println(fmt!("file contains: %?", file_data));
+                                // println(fmt!("file contains: %?", file_data));
                                 tf.stream.write(file_data.as_bytes());
                                 println(fmt!("finish file [%?]", tf.filepath));
                             }
@@ -205,7 +217,7 @@ fn main() {
             }
             
             let mut stream = stream.take();
-            let mut incoming_ip = incoming_ip.take();
+            let incoming_ip = incoming_ip.take();
 
             let mut buf = [0, ..500];
             stream.read(buf);
