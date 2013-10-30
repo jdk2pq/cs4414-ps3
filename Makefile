@@ -4,4 +4,4 @@ zhtta: zhtta.rs
 	rustc zhtta.rs
 
 clean: 
-	rm -rf *~ *.orig
+	rm -rf *~ *.orig zhtta
