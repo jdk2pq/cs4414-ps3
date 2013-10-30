@@ -33,6 +33,18 @@ struct sched_msg {
     filepath: ~std::path::PosixPath
 }
 
+struct cache_entry {
+    file_content: ~[u8],
+    file_id: ~str,
+    precedence: uint
+}
+
+impl cache_entry {
+    pub fn incrementPrecedence(&mut self) {
+        self.precedence += 1;
+    }
+}
+
 //allows for server-side gashing replacement of '<!--#exec cmd="{gash-command}" -->'
 //admittedly lousy implementation
 //but it works!
@@ -85,6 +97,8 @@ fn main() {
     let shared_wahoo_index = arc::RWArc::new(wahoo_index);
     let local_wahoo_index = shared_wahoo_index.clone();
 
+    let cache: ~[cache_entry] = std::vec::with_capacity(5);
+    let shared_cache = arc::RWArc::new(cache);
 
     // dequeue file requests, and send responses.
     // FIFO
@@ -95,8 +109,33 @@ fn main() {
         do spawn {
             loop {
                 let mut tf: sched_msg = sm_port.recv(); // wait for the dequeued request to handle
-                match io::read_whole_file_str(tf.filepath) { // killed if file size is larger than memory size.
-                    Ok(file_data) => {
+
+                //Cache elements
+                let mut isInCache: bool = false;
+                //let local_cache = shared_cache.clone();
+                let mut indexInCache = 0;
+                //let mut precedence = 0;
+
+                do shared_cache.write |ref mut cache_list| {
+                    for cache_item in cache_list.iter() {
+                        if cache_item.file_id == tf.filepath.to_str() {
+                            tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
+                            tf.stream.write(cache_item.file_content);
+                            isInCache = true;
+                            println(fmt!("File [%?] is in the cache already", tf.filepath));
+                            break;
+                        }
+                        indexInCache += 1;
+                    }
+                    if isInCache && indexInCache > 0{
+                        cache_list.swap(indexInCache, indexInCache-1);
+                    }
+                } 
+
+
+                if !isInCache {
+                    match io::read_whole_file_str(tf.filepath) { // killed if file size is larger than memory size.
+                        Ok(file_data) => {
                             println(fmt!("begin serving file from queue [%?]", tf.filepath));
                             println(fmt!("file size is %?", tf.filepath.get_size().unwrap()));
                             if (file_data.contains("<!--#exec cmd=")) {
@@ -106,16 +145,34 @@ fn main() {
                                 // println(fmt!("file contains: %?", file_data_str));
                                 tf.stream.write(file_data_str.as_bytes());
                                 println(fmt!("finish file [%?]", tf.filepath));
+
+                                do shared_cache.write |cache_list| {
+                                    let new_entry: cache_entry = cache_entry{file_content: file_data_str.as_bytes().to_owned(), 
+                                            file_id: tf.filepath.to_str(), precedence: 1};
+                                    cache_list.insert(0, new_entry);   
+                                    println(fmt!("Put [%?] in cache \n Size: %u", tf.filepath, cache_list.len()));                             
+                                }
                             } else {
                                 // A web server should always reply a HTTP header for any legal HTTP request.
                                 tf.stream.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream; charset=UTF-8\r\n\r\n".as_bytes());
                                 // println(fmt!("file contains: %?", file_data));
                                 tf.stream.write(file_data.as_bytes());
                                 println(fmt!("finish file [%?]", tf.filepath));
+                                
+                                do shared_cache.write |cache_list| {
+                                    let new_entry: cache_entry = cache_entry{file_content: file_data.as_bytes().to_owned(), 
+                                            file_id: tf.filepath.to_str(), precedence: 1};
+                                    cache_list.insert(0, new_entry);   
+                                    println(fmt!("Put [%?] in cache \n Size: %u", tf.filepath, cache_list.len()));                             
+                                }
                             }
-                    }
-                    Err(err) => {
-                        println(err);
+
+
+
+                        }
+                        Err(err) => {
+                            println(err);
+                        }
                     }
                 }
             }
